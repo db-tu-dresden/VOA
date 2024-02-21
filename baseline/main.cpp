@@ -166,11 +166,13 @@ void sort(uint64_t* vals, size_t size){
 
 int main(int argc, char** argv){
     size_t key_amount = 32;
+    size_t shift_size = 9;
+
     size_t probe_amount = 1024 * 1024 * 1024;
     probe_amount *= 2;
     
     size_t create_amount = key_amount;
-    size_t shift_size = 9;
+    size_t used_table_size = (key_amount << shift_size); 
     size_t table_size = (key_amount + VECTOR_ELEMENT_COUNT ) << shift_size;
     size_t chunk_size = 1 << shift_size;
 
@@ -191,6 +193,7 @@ int main(int argc, char** argv){
     double probe_amount_gibyte = probe_amount_mibyte / 1024;
 
     std::cout << "Generate Table with " << table_size << " Buckets filled with " << create_amount << " Elements. Space Between values is: " << chunk_size - 1 << std::endl;
+    std::cout << "\t\tused table size: " << used_table_size * sizeof(uint64_t) / 1024 << " kiB\t" << used_table_size * sizeof(uint64_t) / (1024. * 1024)  << " kiB\t" << used_table_size * sizeof(uint64_t) / (1024. * 1024 * 1024) << " kiB\t" << std::endl;
     generate_table(table, table_size, table_data, create_amount, chunk_size);
     std::cout << "Now probing for " << probe_amount << " Elements or " << probe_amount_kibyte << " kiB\t" << probe_amount_mibyte << " MiB\t" << probe_amount_gibyte << " GiB\n";
         
@@ -212,7 +215,6 @@ int main(int argc, char** argv){
         time_ms[i] = duration_time_milliseconds(b, e);
     }
 
-
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
@@ -223,7 +225,7 @@ int main(int argc, char** argv){
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
     std::cout <<" ms\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "Million Probes / s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
+    std::cout << "Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
     std::cout << "VoA" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
@@ -242,5 +244,5 @@ int main(int argc, char** argv){
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
     std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "Million Probes / s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
+    std::cout << "Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
 }
