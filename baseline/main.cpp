@@ -30,7 +30,6 @@ uint64_t duration_time_seconds (time_stamp begin, time_stamp end){
     return std::chrono::duration_cast<std::chrono::seconds>(end - begin).count();
 }
 
-
 size_t noise(size_t position, size_t seed){
     size_t BIT_NOISE1 = 0x68E31DA4;
     size_t BIT_NOISE2 = 0xB5297A4D;
@@ -123,9 +122,6 @@ void generate_table(uint64_t *table, size_t t_size, uint64_t* build, size_t b_si
 
 }
 
-
-
-
 size_t probe_simd_horizontal(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements){
     size_t shift_val = __builtin_ctz(chunk_size_elements);
     size_t hit_count = 0;
@@ -143,18 +139,18 @@ size_t probe_simd_horizontal(uint64_t *table, size_t t_size, uint64_t *lookup, s
 
 size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t l_size, size_t chunk_size_elements){
     size_t shift_val = __builtin_ctz(chunk_size_elements);
+    __m512i zero_512i = _mm512_setzero_si512();
     size_t hit_count = 0;
     for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
         __m512i current_vec = _mm512_loadu_epi64(&lookup[i]);
         __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, _mm512_set1_epi64(1)), shift_val);
-        __m512i table_val = _mm512_i64gather_epi64(position_vec, table, 8);
+        __m512i table_val = _mm512_i64gather_epi64( position_vec, table, 8);
         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
         
         hit_count += __builtin_popcount(res_val);
     }
     return hit_count;
 }
-
 
 void sort(uint64_t* vals, size_t size){
     for(size_t i = 0; i < size; i ++){
@@ -168,11 +164,10 @@ void sort(uint64_t* vals, size_t size){
     }
 }
 
-
-
 int main(int argc, char** argv){
     size_t key_amount = 32;
-    size_t probe_amount = 1024 * 1024 * 512;
+    size_t probe_amount = 1024 * 1024 * 1024;
+    probe_amount *= 2;
     
     size_t create_amount = key_amount;
     size_t shift_size = 9;
@@ -197,39 +192,42 @@ int main(int argc, char** argv){
 
     std::cout << "Generate Table with " << table_size << " Buckets filled with " << create_amount << " Elements. Space Between values is: " << chunk_size - 1 << std::endl;
     generate_table(table, table_size, table_data, create_amount, chunk_size);
-    std::cout << "Now probing for " << probe_amount << " Elements or " << probe_amount_kibyte << " kiB\t" << probe_amount_mibyte << " MiB\t" << probe_amount_gibyte << " GiB)\n";
+    std::cout << "Now probing for " << probe_amount << " Elements or " << probe_amount_kibyte << " kiB\t" << probe_amount_mibyte << " MiB\t" << probe_amount_gibyte << " GiB\n";
         
     std::cout << "\nsanity check: " << std::flush;
     size_t res_h = probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
     size_t res_v = probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size);
+    
+    size_t x = 0;
+    uint64_t median, mean, min, max;
+
     std::cout << res_h << "\t" << res_v << "\t" << res_h - res_v << std::endl;
     std::cout << "===========================\n";
     std::cout << "\t\tmedian\tmean\tmax\tmin\n";
     std::cout << "Horizontal" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
 
-    uint64_t median, mean, min, max;
 
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
-    max = time_ms[repeats-ignore_best_and_worst_x];
+    max = time_ms[repeats - ignore_best_and_worst_x - 1];
     mean = 0;
     for(size_t i = ignore_best_and_worst_x; i < repeats -ignore_best_and_worst_x; i ++){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
     std::cout <<" ms\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "tp in GiB/s\t" << (probe_amount_mibyte * 1000) / (median * 1024) << std::endl;
+    std::cout << "Million Probes / s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
     std::cout << "VoA" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
@@ -237,12 +235,12 @@ int main(int argc, char** argv){
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
-    max = time_ms[repeats-ignore_best_and_worst_x];
+    max = time_ms[repeats - ignore_best_and_worst_x - 1];
     mean = 0;
     for(size_t i = ignore_best_and_worst_x; i < repeats -ignore_best_and_worst_x; i ++){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
     std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "tp in GiB/s\t" << (probe_amount_mibyte * 1000) / (median * 1024) << std::endl;
+    std::cout << "Million Probes / s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
 }

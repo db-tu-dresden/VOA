@@ -1,1 +1,1 @@
-g++ main.cpp -mavx512f
+g++ main.cpp -mavx512f -O3
