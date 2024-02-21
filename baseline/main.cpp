@@ -9,7 +9,9 @@
 
 #include <chrono>
 
-#include <omp.h>
+#include <algorithm>
+
+#include <omp.h> // unused rn
 
 #define VECTOR_ELEMENT_COUNT 8
 
@@ -29,6 +31,23 @@ uint64_t duration_time_milliseconds (std::chrono::high_resolution_clock::time_po
 uint64_t duration_time_seconds (time_stamp begin, time_stamp end){
     return std::chrono::duration_cast<std::chrono::seconds>(end - begin).count();
 }
+
+
+char* getCmdOption(char ** begin, char ** end, const std::string & option)
+{
+    char ** itr = std::find(begin, end, option);
+    if (itr != end && ++itr != end)
+    {
+        return *itr;
+    }
+    return 0;
+}
+
+bool cmdOptionExists(char** begin, char** end, const std::string& option)
+{
+    return std::find(begin, end, option) != end;
+}
+
 
 size_t noise(size_t position, size_t seed){
     size_t BIT_NOISE1 = 0x68E31DA4;
@@ -165,26 +184,100 @@ void sort(uint64_t* vals, size_t size){
 }
 
 int main(int argc, char** argv){
+    if(argc >= 2 && cmdOptionExists(argv, argv+argc, "-h")){
+        std::cout << "This is a simple baseline project for VOA.\n" 
+            << "Currently, we measure  random access times of uload and gather in the context of Hash Tables\n"
+            << "the options you have to run this project are:\n"
+            << "\t-k <amount>\tdefault: 32\t\tthe amount is how many different integers are in the table\n\t\t\t\t\t\t\t(influences the table size)\n"
+            << "\t-kb <amount>\t\t\t\tsimilar to -k but sets the table size in MiByte\n"
+            << "\t-s <amount>\tdefault: 9 max: 9\tthe shift amount to generate a stride\n"
+            << "\t-p <amount>\tdefault: 1\t\tthe amount of data that should be probed for in GiByte\n"
+            << "\t-r <amount>\tdefault: 15\t\tthe number of repeats each measurement  should be repeated\n"
+            << "\t-h\t\t\t\t\tprints this help\n";
+        exit(0);
+    }   
+    char * input_k = getCmdOption(argv, argv+argc,"-k");
+    char * input_kb = getCmdOption(argv, argv+argc,"-kb");
+    char * input_s = getCmdOption(argv, argv+argc,"-s");
+    char * input_p = getCmdOption(argv, argv+argc,"-p");
+    char * input_r = getCmdOption(argv, argv+argc,"-r");
+
     size_t key_amount = 32;
     size_t shift_size = 9;
+    size_t probe_amount = 1024 * 1024 * 128; // 1 GiByte
+    size_t repeats = 15;
 
-    size_t probe_amount = 1024 * 1024 * 1024;
-    probe_amount *= 2;
-    
+    if(input_p){
+        double a = atof(input_p);
+        probe_amount *= a;
+    }
+
+    if(input_r){
+        size_t a = atoi(input_r);
+        repeats = a;
+        if(repeats <= 0){
+            repeats = 1;
+        }
+    }
+
+    if(input_s){
+        shift_size = atoi(input_s);
+        if(shift_size < 0){
+            shift_size = 0;
+        }else if(shift_size > 9){
+            shift_size = 9;
+        }
+    }
+
+    if(input_k){
+        key_amount =  atol(input_k);
+    }else if(input_kb){
+        double nkey = atof(input_kb);
+        size_t nnkey = nkey * 1024 * 1024;
+        nnkey >>= shift_size;
+        nnkey /= sizeof(uint64_t);
+        if(nnkey < VECTOR_ELEMENT_COUNT){
+            nnkey = VECTOR_ELEMENT_COUNT;
+        }
+        key_amount = nnkey;
+    }
+
     size_t create_amount = key_amount;
-    size_t used_table_size = (key_amount << shift_size); 
-    size_t table_size = (key_amount + VECTOR_ELEMENT_COUNT ) << shift_size;
     size_t chunk_size = 1 << shift_size;
 
-    uint64_t* table = (uint64_t*)malloc(table_size * sizeof(uint64_t));
+    size_t table_size = (key_amount << shift_size); 
+    size_t table_size_alloc = table_size + VECTOR_ELEMENT_COUNT; // we allocate more memory than we want to use to avoid segmentation faults
+
+    uint64_t* table = (uint64_t*)malloc(table_size_alloc * sizeof(uint64_t));
     uint64_t* table_data = (uint64_t*)malloc(create_amount * sizeof(uint64_t));
     uint64_t* probe_data = (uint64_t*)malloc(probe_amount * sizeof(uint64_t));
     
-    size_t repeats = 15;
-    size_t ignore_best_and_worst_x = 2;
-    size_t time_ms[repeats];
+    std::cout << "---------------------------------------------------------------------------\n";
+//---Generating-Hash-Table-and-Printing-Info---------
+    size_t table_size_byte = table_size * sizeof(uint64_t);
+    double table_size_kibyte = table_size_byte / 1024;
+    double table_size_mibyte = table_size_kibyte / 1024;
+    double table_size_gibyte = table_size_mibyte / 1024;
+
+
+    std::cout << "Hash Table Information:\t\t"; 
+    if(table_size_byte < 1024){
+        std::cout << table_size_byte << " Byte";
+    }else if(table_size_byte >= 1024 && table_size_kibyte < 1024){
+        std::cout << table_size_kibyte << " kiB";
+    }else if(table_size_kibyte >= 1024 && table_size_mibyte < 1024){
+        std::cout << table_size_mibyte << " MiB"; 
+    }else{
+        std::cout << table_size_gibyte << " GiB";
+    }
+    std::cout << "\t\t" << table_size << " Buckets\n";
+    std::cout << "\t" << key_amount << " different keys\t" << chunk_size << " stride size\n";
+
+    std::cout << "---------------------------------------------------------------------------\n";
 
     generate_build_data(table_data, create_amount);
+    generate_table(table, table_size, table_data, create_amount, chunk_size);
+//---Generating-Probe-Data-and-Printing-Info---------
     probe_amount = generate_probe_data(probe_data, probe_amount, key_amount, 0xadd230b);
 
     size_t probe_amount_byte = probe_amount * sizeof(uint64_t);
@@ -192,21 +285,35 @@ int main(int argc, char** argv){
     double probe_amount_mibyte = probe_amount_kibyte / 1024;
     double probe_amount_gibyte = probe_amount_mibyte / 1024;
 
-    std::cout << "Generate Table with " << table_size << " Buckets filled with " << create_amount << " Elements. Space Between values is: " << chunk_size - 1 << std::endl;
-    std::cout << "\t\tused table size: " << used_table_size * sizeof(uint64_t) / 1024 << " kiB\t" << used_table_size * sizeof(uint64_t) / (1024. * 1024)  << " kiB\t" << used_table_size * sizeof(uint64_t) / (1024. * 1024 * 1024) << " kiB\t" << std::endl;
-    generate_table(table, table_size, table_data, create_amount, chunk_size);
-    std::cout << "Now probing for " << probe_amount << " Elements or " << probe_amount_kibyte << " kiB\t" << probe_amount_mibyte << " MiB\t" << probe_amount_gibyte << " GiB\n";
-        
-    std::cout << "\nsanity check: " << std::flush;
+    std::cout << "Probe Data Information:\t\t"; 
+    if(probe_amount_byte < 1024){
+        std::cout << probe_amount_byte << " Byte";
+    }else if(probe_amount_byte >= 1024 && probe_amount_kibyte < 1024){
+        std::cout << probe_amount_kibyte << " kiB";
+    }else if(probe_amount_kibyte >= 1024 && probe_amount_mibyte < 1024){
+        std::cout << probe_amount_mibyte << " MiB"; 
+    }else{
+        std::cout << probe_amount_gibyte << " GiB";
+    }
+    std::cout << "\t" << probe_amount << " Values" << std::endl;
+    std::cout << "---------------------------------------------------------------------------\n";
+
+
+//---Sanity-Checking-that-both-algs-have-same-result-
+    std::cout << "sanity check: " << std::flush;
     size_t res_h = probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
     size_t res_v = probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size);
     
-    size_t x = 0;
-    uint64_t median, mean, min, max;
+    std::cout << res_h << "\t" << res_v << "\t" << res_h - res_v << std::endl;    
 
-    std::cout << res_h << "\t" << res_v << "\t" << res_h - res_v << std::endl;
-    std::cout << "===========================\n";
-    std::cout << "\t\tmedian\tmean\tmax\tmin\n";
+//---Timeing-----------------------------------------
+    uint64_t median, mean, min, max;
+    size_t ignore_best_and_worst_x = (repeats/6);
+    size_t time_ms[repeats];
+    size_t x = 0; // used for evading compiler optimization
+    std::cout << "---------------------------------------------------------------------------\n";
+    std::cout << "  " << repeats <<" repeats ± " << ignore_best_and_worst_x <<"\tmedian\tmean\tmax\tmin\n";
+//---Horizontal-Testing------------------------------
     std::cout << "Horizontal" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
@@ -224,12 +331,14 @@ int main(int argc, char** argv){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
-    std::cout <<" ms\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
+    std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
+    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
+
+//---VOA-Testing-------------------------------------
     std::cout << "VoA" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        x += probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
@@ -243,6 +352,6 @@ int main(int argc, char** argv){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
-    std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t" << (x & 0xF) << std::endl;
+    std::cout <<" ms\t\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
+    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
 }
