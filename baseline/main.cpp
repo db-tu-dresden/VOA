@@ -192,7 +192,8 @@ int main(int argc, char** argv){
             << "\t-kb <amount>\t\t\t\tsimilar to -k but sets the table size in MiByte\n"
             << "\t-s <amount>\tdefault: 9 max: 9\tthe shift amount to generate a stride\n"
             << "\t-p <amount>\tdefault: 1\t\tthe amount of data that should be probed for in GiByte\n"
-            << "\t-r <amount>\tdefault: 15\t\tthe number of repeats each measurement  should be repeated\n"
+            << "\t-r <amount>\tdefault: 15\t\tthe number of repeats each measurement should be repeated\n"
+            << "\t-t <amount>\tdefault: 1\t\tthe number of threats used to run the benchmark\n"
             << "\t-h\t\t\t\t\tprints this help\n";
         exit(0);
     }   
@@ -201,6 +202,7 @@ int main(int argc, char** argv){
     char * input_s = getCmdOption(argv, argv+argc,"-s");
     char * input_p = getCmdOption(argv, argv+argc,"-p");
     char * input_r = getCmdOption(argv, argv+argc,"-r");
+    char * input_t = getCmdOption(argv, argv+argc,"-t");
 
     size_t key_amount = 32;
     size_t shift_size = 9;
@@ -354,4 +356,5 @@ int main(int argc, char** argv){
     mean /= (repeats - ignore_best_and_worst_x * 2);
     std::cout <<" ms\t\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
     std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
+    std::cout << "---------------------------------------------------------------------------\n\n";
 }

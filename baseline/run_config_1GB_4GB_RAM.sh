@@ -1,0 +1,1 @@
+numactl -N 0 -m 0 ./a.out -kb 1 -p 4
