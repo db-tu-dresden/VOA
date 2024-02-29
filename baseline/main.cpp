@@ -141,6 +141,18 @@ void generate_table(uint64_t *table, size_t t_size, uint64_t* build, size_t b_si
 
 }
 
+size_t probe_scalar(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements){
+    size_t shift_val = __builtin_ctz(chunk_size_elements);
+    size_t hit_count = 0;
+    for(size_t i = 0; i < l_size; i++){
+        uint64_t current_val = lookup[i];
+        size_t pos = (current_val - 1) << shift_val;
+        bool res_val = table[pos] == current_val;
+        hit_count += res_val;
+    }
+    return hit_count;
+}
+
 size_t probe_simd_horizontal(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements){
     size_t shift_val = __builtin_ctz(chunk_size_elements);
     size_t hit_count = 0;
@@ -171,6 +183,37 @@ size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t 
     return hit_count;
 }
 
+// TODO
+// size_t probe_simd_horizontal_multi_threaded(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements){
+//     size_t shift_val = __builtin_ctz(chunk_size_elements);
+//     size_t hit_count = 0;
+//     for(size_t i = 0; i < l_size; i++){
+//         uint64_t current_val = lookup[i];
+//         __m512i current_vec = _mm512_set1_epi64(current_val);
+//         size_t pos = (current_val - 1) << shift_val;
+//         __m512i table_val = _mm512_loadu_epi64(&table[pos]);
+//         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
+        
+//         hit_count += __builtin_popcount(res_val);
+//     }
+//     return hit_count;
+// }
+
+// size_t probe_simd_voa_multi_threaded(uint64_t *table, size_t t_size, uint64_t * lookup, size_t l_size, size_t chunk_size_elements){
+//     size_t shift_val = __builtin_ctz(chunk_size_elements);
+//     __m512i zero_512i = _mm512_setzero_si512();
+//     size_t hit_count = 0;
+//     for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
+//         __m512i current_vec = _mm512_loadu_epi64(&lookup[i]);
+//         __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, _mm512_set1_epi64(1)), shift_val);
+//         __m512i table_val = _mm512_i64gather_epi64( position_vec, table, 8);
+//         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
+        
+//         hit_count += __builtin_popcount(res_val);
+//     }
+//     return hit_count;
+// }
+
 void sort(uint64_t* vals, size_t size){
     for(size_t i = 0; i < size; i ++){
         for(size_t e = i + 1; e < size; e++){
@@ -192,8 +235,9 @@ int main(int argc, char** argv){
             << "\t-kb <amount>\t\t\t\tsimilar to -k but sets the table size in MiByte\n"
             << "\t-s <amount>\tdefault: 9 max: 9\tthe shift amount to generate a stride\n"
             << "\t-p <amount>\tdefault: 1\t\tthe amount of data that should be probed for in GiByte\n"
-            << "\t-r <amount>\tdefault: 15\t\tthe number of repeats each measurement should be repeated\n"
-            << "\t-t <amount>\tdefault: 1\t\tthe number of threats used to run the benchmark\n"
+            << "\t-r <amount>\tdefault: 7\t\tthe number of repeats each measurement should be repeated\n"
+            << "\t-t <amount>\tdefault: 1\t\tthe number of threats used to run the benchmark \\unused rn\n"
+            << "\t-c <amount>\tdefault: 0\t\tthe number of equal elements in a permutation\n"
             << "\t-h\t\t\t\t\tprints this help\n";
         exit(0);
     }   
@@ -203,11 +247,12 @@ int main(int argc, char** argv){
     char * input_p = getCmdOption(argv, argv+argc,"-p");
     char * input_r = getCmdOption(argv, argv+argc,"-r");
     char * input_t = getCmdOption(argv, argv+argc,"-t");
+    char * input_t = getCmdOption(argv, argv+argc,"-c");
 
     size_t key_amount = 32;
     size_t shift_size = 9;
     size_t probe_amount = 1024 * 1024 * 128; // 1 GiByte
-    size_t repeats = 15;
+    size_t repeats = 7;
 
     if(input_p){
         double a = atof(input_p);
@@ -302,11 +347,15 @@ int main(int argc, char** argv){
 
 
 //---Sanity-Checking-that-both-algs-have-same-result-
+    size_t a,b,c;
     std::cout << "sanity check: " << std::flush;
-    size_t res_h = probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
-    size_t res_v = probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size);
-    
-    std::cout << res_h << "\t" << res_v << "\t" << res_h - res_v << std::endl;    
+    a = probe_scalar(table, table_size, probe_data, probe_amount, chunk_size);
+    std::cout << a << "\t" << std::flush;
+    b = probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+    std::cout << b << "\t" << std::flush;
+    c = probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size); 
+    std::cout << c << "\t" << std::flush; 
+    std::cout << a - b << " " << a - c << " " << b - c << std::endl;    
 
 //---Timeing-----------------------------------------
     uint64_t median, mean, min, max;
@@ -315,6 +364,26 @@ int main(int argc, char** argv){
     size_t x = 0; // used for evading compiler optimization
     std::cout << "---------------------------------------------------------------------------\n";
     std::cout << "  " << repeats <<" repeats ± " << ignore_best_and_worst_x <<"\tmedian\tmean\tmax\tmin\n";
+//---Scalar-Testing------------------------------
+    std::cout << "Scalar" << std::flush;
+    for(size_t i = 0; i < repeats; i++){
+        time_stamp b = time_now();
+        x += probe_scalar(table, table_size, probe_data, probe_amount, chunk_size);
+        time_stamp e = time_now();
+        time_ms[i] = duration_time_milliseconds(b, e);
+    }
+
+    sort(time_ms, repeats);
+    median = time_ms[repeats/2];
+    min = time_ms[ignore_best_and_worst_x];
+    max = time_ms[repeats - ignore_best_and_worst_x - 1];
+    mean = 0;
+    for(size_t i = ignore_best_and_worst_x; i < repeats -ignore_best_and_worst_x; i ++){
+        mean += time_ms[i];
+    }
+    mean /= (repeats - ignore_best_and_worst_x * 2);
+    std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
+    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
 //---Horizontal-Testing------------------------------
     std::cout << "Horizontal" << std::flush;
     for(size_t i = 0; i < repeats; i++){
