@@ -13,6 +13,8 @@
 
 #include <omp.h> // unused rn
 
+#include "io.hpp"
+
 #define VECTOR_ELEMENT_COUNT 8
 
 using time_stamp = std::chrono::high_resolution_clock::time_point;
@@ -49,6 +51,14 @@ bool cmdOptionExists(char** begin, char** end, const std::string& option)
 }
 
 
+size_t permuteQPR(size_t x, size_t prime){
+    if (x >= prime){
+        return x;
+    }
+    size_t residue = (size_t)(x * x) % prime;
+    return (x <= prime / 2) ? residue : prime - residue;
+}
+
 size_t noise(size_t position, size_t seed){
     size_t BIT_NOISE1 = 0x68E31DA4;
     size_t BIT_NOISE2 = 0xB5297A4D;
@@ -66,39 +76,87 @@ size_t noise(size_t position, size_t seed){
     return mangled;
 }
 
-void generate_permutation(uint64_t* permutations, size_t permutation_size, size_t permutation_count, size_t total_elements, size_t seed){
+void create_permutation(uint64_t* permutation, size_t permutation_size, size_t total_elements, size_t seed){
+    size_t run_nr = 0;
+    for(size_t p_element = 1; p_element < permutation_size; p_element++){
+        uint64_t element;
+        bool fine;
+        do{
+            fine = true;
+            element = (noise(run_nr++ + permutation[p_element - 1],  seed) % total_elements) + 1;
+            
+            //check for uniqueness of new value. CAN be done better with Dirks code.
+            for(size_t check = 0; check < p_element && fine; check++){
+                fine = (element != permutation[check]);
+            }
+        }while(!fine);
+        permutation[p_element] = element;
+    }
+}
+
+bool is_unique(uint64_t* permutations, size_t permutation_size, size_t current_permutation){
+    for(size_t check_1 = 0; check_1 < current_permutation; check_1++){
+        bool same = true;
+        for(size_t check_2 = 0; check_2 < permutation_size; check_2 ++){
+            if(permutations[check_1 * permutation_size + check_2] != permutations[current_permutation * permutation_size + check_2]){
+                same = false;
+                break;
+            }
+        }
+        if(same){
+            return false;
+        }
+    }
+    return true;
+}
+
+void print_permutations(uint64_t* permutations, size_t permutation_size, size_t permutation_count){
+    for(size_t i = 0; i <= permutation_count; i++){
+        std::cout << i << ":\t";
+        for(size_t e =0; e < permutation_size; e++){
+            std::cout << "\t" << permutations[i * permutation_size + e];
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+}
+
+void collision_permutation(uint64_t* permutation, size_t permutation_size, size_t collisions ,size_t seed){
+    collisions += (collisions == 0);
+    collisions--;
+    size_t ran_id = noise(seed, seed * seed) & 0x7;
+    size_t run_id = 0;
+    while(collisions > 0 && ++run_id < 20){
+        size_t id = permuteQPR(ran_id, 7) & 0x7;
+        if(permutation[id] != permutation[0]){
+            collisions--;
+            permutation[id] = permutation[0];
+        }
+        ran_id++;
+        if(ran_id > VECTOR_ELEMENT_COUNT){
+            ran_id = 0;
+        }
+    }
+}
+
+void generate_permutation(uint64_t* permutations, size_t permutation_size, size_t permutation_count, size_t total_elements, size_t seed, size_t collisions){
     size_t run_nr = 0;
 
     for(size_t p_nr = 0; p_nr < permutation_count; p_nr++){
-start_generation:
         uint64_t * help = &permutations[p_nr * permutation_size];
         help[0] = (p_nr % total_elements) + 1;
-        for(size_t p_element = 1; p_element < permutation_size; p_element++){
-            size_t element;
-            bool fine;
-            do{
-                fine = true;
-                element = (noise(run_nr++ + help[p_element - 1],  seed + p_nr) % total_elements) + 1;
-                for(size_t check = 0; check < p_element; check++){
-                    if(element == help[check]){
-                        fine = false;
-                        break;
-                    }
-                }
-            }while(!fine);
-            permutations[p_nr * permutation_size + p_element] = element;
-        }
-        for(size_t check_1 = 0; check_1 < p_nr; check_1++){
-            bool same = true;
-            for(size_t check_2 = 0; check_2 < permutation_size; check_2 ++){
-                if(permutations[check_1 * permutation_size + check_2] != help[check_2]){
-                    same = false;
-                    break;
-                }
-            }
-            if(same){ 
-                goto start_generation;
-            }
+start_generation:
+        //generate a permutation
+        create_permutation(help, permutation_size, total_elements, seed + ++run_nr);
+
+        collision_permutation(help, permutation_size, collisions, (seed + run_nr) ^ 0xf3a489c2);
+        //check if permutation is unique
+        bool unique = is_unique(permutations, permutation_size, p_nr);
+           
+        if(!unique){ 
+            print_permutations(permutations, permutation_size, p_nr);
+            std::cout << p_nr << "\tjump\n";
+            goto start_generation;
         }
     }
 }
@@ -109,11 +167,11 @@ void generate_build_data(uint64_t* values, size_t size){
     }
 }
 
-size_t generate_probe_data(uint64_t*& values, size_t size, size_t key_amount, size_t seed){
-    size_t permutation_count = key_amount + 1;
+size_t generate_probe_data(uint64_t*& values, size_t size, size_t key_element_count, size_t seed, size_t collisions = 0){
+    size_t permutation_count = key_element_count + 3 * (collisions != 8);
     size_t permutation_length = VECTOR_ELEMENT_COUNT; 
     uint64_t* permutations = (uint64_t*) malloc(permutation_count * permutation_length * sizeof(uint64_t));
-    generate_permutation(permutations, permutation_length, permutation_count, key_amount, seed);
+    generate_permutation(permutations, permutation_length, permutation_count, key_element_count, seed, collisions);
     
     size_t i = 0, pos = 0;
     for(i = 0, pos = 0; i < (size / permutation_length) &&  pos < size; i++){
@@ -237,7 +295,8 @@ int main(int argc, char** argv){
             << "\t-p <amount>\tdefault: 1\t\tthe amount of data that should be probed for in GiByte\n"
             << "\t-r <amount>\tdefault: 7\t\tthe number of repeats each measurement should be repeated\n"
             << "\t-t <amount>\tdefault: 1\t\tthe number of threats used to run the benchmark \\unused rn\n"
-            << "\t-c <amount>\tdefault: 0\t\tthe number of equal elements in a permutation\n"
+            << "\t-c <amount>\tdefault: 0 max: 8\tthe number of equal elements in a permutation\n"
+            << "\t-f <name>\t\t\t\tname of the file in which the results get printed\n"
             << "\t-h\t\t\t\t\tprints this help\n";
         exit(0);
     }   
@@ -247,16 +306,37 @@ int main(int argc, char** argv){
     char * input_p = getCmdOption(argv, argv+argc,"-p");
     char * input_r = getCmdOption(argv, argv+argc,"-r");
     char * input_t = getCmdOption(argv, argv+argc,"-t");
-    char * input_t = getCmdOption(argv, argv+argc,"-c");
+    char * input_c = getCmdOption(argv, argv+argc,"-c");
+    char * input_f = getCmdOption(argv, argv+argc,"-f");
 
-    size_t key_amount = 32;
+    size_t key_element_count = 32;
     size_t shift_size = 9;
-    size_t probe_amount = 1024 * 1024 * 128; // 1 GiByte
+    size_t probe_element_count = 1024 * 1024 * 128; // 1 GiByte //element count
     size_t repeats = 7;
+    size_t collision_count = 1;
+    size_t thread_count = 1;
+
+    if(input_c){
+        collision_count = atoi(input_c);
+        if(collision_count > 8){
+            collision_count = 8;
+        }else if(collision_count < 1){
+            collision_count = 1;
+        }
+    }
+
+    if(input_t){
+        thread_count = atoi(input_t);
+        if(thread_count < 1){
+            thread_count = 1;
+        }else if(thread_count > 128){
+            thread_count = 128;
+        }
+    }
 
     if(input_p){
         double a = atof(input_p);
-        probe_amount *= a;
+        probe_element_count *= a;
     }
 
     if(input_r){
@@ -277,7 +357,7 @@ int main(int argc, char** argv){
     }
 
     if(input_k){
-        key_amount =  atol(input_k);
+        key_element_count =  atol(input_k);
     }else if(input_kb){
         double nkey = atof(input_kb);
         size_t nnkey = nkey * 1024 * 1024;
@@ -286,19 +366,33 @@ int main(int argc, char** argv){
         if(nnkey < VECTOR_ELEMENT_COUNT){
             nnkey = VECTOR_ELEMENT_COUNT;
         }
-        key_amount = nnkey;
+        key_element_count = nnkey;
+    }
+    std::string filename = "latest";
+    if(input_f){
+        filename = input_f;
     }
 
-    size_t create_amount = key_amount;
+    create_raw_file(filename);
+    create_summary_file(filename);
+
+    size_t seed =0;
+    if(seed == 0){
+        srand(std::time(nullptr));
+        seed = std::rand();
+    }
+
+    size_t create_amount = key_element_count;
     size_t chunk_size = 1 << shift_size;
 
-    size_t table_size = (key_amount << shift_size); 
+    size_t table_size = (key_element_count << shift_size); 
     size_t table_size_alloc = table_size + VECTOR_ELEMENT_COUNT; // we allocate more memory than we want to use to avoid segmentation faults
 
     uint64_t* table = (uint64_t*)malloc(table_size_alloc * sizeof(uint64_t));
     uint64_t* table_data = (uint64_t*)malloc(create_amount * sizeof(uint64_t));
-    uint64_t* probe_data = (uint64_t*)malloc(probe_amount * sizeof(uint64_t));
-    
+    uint64_t* probe_data = (uint64_t*)malloc(probe_element_count * sizeof(uint64_t));
+    std::cout << "---------------------------------------------------------------------------\n";
+    std::cout << "seed:\t" << seed << std::endl;
     std::cout << "---------------------------------------------------------------------------\n";
 //---Generating-Hash-Table-and-Printing-Info---------
     size_t table_size_byte = table_size * sizeof(uint64_t);
@@ -318,61 +412,64 @@ int main(int argc, char** argv){
         std::cout << table_size_gibyte << " GiB";
     }
     std::cout << "\t\t" << table_size << " Buckets\n";
-    std::cout << "\t" << key_amount << " different keys\t" << chunk_size << " stride size\n";
+    std::cout << "\t" << key_element_count << " different keys\t" << chunk_size << " stride size\n";
 
     std::cout << "---------------------------------------------------------------------------\n";
 
     generate_build_data(table_data, create_amount);
     generate_table(table, table_size, table_data, create_amount, chunk_size);
 //---Generating-Probe-Data-and-Printing-Info---------
-    probe_amount = generate_probe_data(probe_data, probe_amount, key_amount, 0xadd230b);
+    probe_element_count = generate_probe_data(probe_data, probe_element_count, key_element_count, seed, collision_count);
 
-    size_t probe_amount_byte = probe_amount * sizeof(uint64_t);
-    double probe_amount_kibyte = probe_amount_byte / 1024;
-    double probe_amount_mibyte = probe_amount_kibyte / 1024;
-    double probe_amount_gibyte = probe_amount_mibyte / 1024;
+    size_t probe_element_count_byte = probe_element_count * sizeof(uint64_t);
+    double probe_element_count_kibyte = probe_element_count_byte / 1024;
+    double probe_element_count_mibyte = probe_element_count_kibyte / 1024;
+    double probe_element_count_gibyte = probe_element_count_mibyte / 1024;
 
     std::cout << "Probe Data Information:\t\t"; 
-    if(probe_amount_byte < 1024){
-        std::cout << probe_amount_byte << " Byte";
-    }else if(probe_amount_byte >= 1024 && probe_amount_kibyte < 1024){
-        std::cout << probe_amount_kibyte << " kiB";
-    }else if(probe_amount_kibyte >= 1024 && probe_amount_mibyte < 1024){
-        std::cout << probe_amount_mibyte << " MiB"; 
+    if(probe_element_count_byte < 1024){
+        std::cout << probe_element_count_byte << " Byte";
+    }else if(probe_element_count_byte >= 1024 && probe_element_count_kibyte < 1024){
+        std::cout << probe_element_count_kibyte << " kiB";
+    }else if(probe_element_count_kibyte >= 1024 && probe_element_count_mibyte < 1024){
+        std::cout << probe_element_count_mibyte << " MiB"; 
     }else{
-        std::cout << probe_amount_gibyte << " GiB";
+        std::cout << probe_element_count_gibyte << " GiB";
     }
-    std::cout << "\t" << probe_amount << " Values" << std::endl;
+    std::cout << "\t" << probe_element_count << " Values" << std::endl;
     std::cout << "---------------------------------------------------------------------------\n";
 
 
 //---Sanity-Checking-that-both-algs-have-same-result-
     size_t a,b,c;
     std::cout << "sanity check: " << std::flush;
-    a = probe_scalar(table, table_size, probe_data, probe_amount, chunk_size);
+    a = probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
     std::cout << a << "\t" << std::flush;
-    b = probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+    b = probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
     std::cout << b << "\t" << std::flush;
-    c = probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size); 
+    c = probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size); 
     std::cout << c << "\t" << std::flush; 
     std::cout << a - b << " " << a - c << " " << b - c << std::endl;    
 
 //---Timeing-----------------------------------------
     uint64_t median, mean, min, max;
+    double mpps;
     size_t ignore_best_and_worst_x = (repeats/6);
     size_t time_ms[repeats];
     size_t x = 0; // used for evading compiler optimization
     std::cout << "---------------------------------------------------------------------------\n";
     std::cout << "  " << repeats <<" repeats ± " << ignore_best_and_worst_x <<"\tmedian\tmean\tmax\tmin\n";
+
 //---Scalar-Testing------------------------------
     std::cout << "Scalar" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        x += probe_scalar(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
 
+    write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "Scalar", time_ms, repeats);
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
@@ -382,17 +479,21 @@ int main(int argc, char** argv){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
+    mpps = (probe_element_count * 1000.) / (median * 1000 * 1000);
     std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
+    std::cout << "   Million Probes/s\t" << mpps << "\t\t\t\t" << (x & 0xF) << std::endl;
+    write_summary(filename, table_size_byte, probe_element_count_byte, collision_count, thread_count, chunk_size, "Scalar",  median, mpps);
+
 //---Horizontal-Testing------------------------------
     std::cout << "Horizontal" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        x += probe_simd_horizontal(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
 
+    write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "Horizontal", time_ms, repeats);
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
@@ -402,18 +503,21 @@ int main(int argc, char** argv){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
+    mpps = (probe_element_count * 1000.) / (median * 1000 * 1000);
     std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
+    std::cout << "   Million Probes/s\t" << mpps << "\t\t\t\t" << (x & 0xF) << std::endl;
+    write_summary(filename, table_size_byte, probe_element_count_byte, collision_count, thread_count, chunk_size, "Horizontal",  median, mpps);
 
 //---VOA-Testing-------------------------------------
-    std::cout << "VoA" << std::flush;
+    std::cout << "VOA" << std::flush;
     for(size_t i = 0; i < repeats; i++){
         time_stamp b = time_now();
-        x += probe_simd_voa(table, table_size, probe_data, probe_amount, chunk_size);
+        x += probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size);
         time_stamp e = time_now();
         time_ms[i] = duration_time_milliseconds(b, e);
     }
 
+    write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "VOA", time_ms, repeats);
     sort(time_ms, repeats);
     median = time_ms[repeats/2];
     min = time_ms[ignore_best_and_worst_x];
@@ -423,7 +527,10 @@ int main(int argc, char** argv){
         mean += time_ms[i];
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
-    std::cout <<" ms\t\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
-    std::cout << "   Million Probes/s\t" << (probe_amount * 1000.) / (median * 1000 * 1000) << "\t\t\t\t" << (x & 0xF) << std::endl;
+    mpps = (probe_element_count * 1000.) / (median * 1000 * 1000);
+    std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
+    std::cout << "   Million Probes/s\t" << mpps << "\t\t\t\t" << (x & 0xF) << std::endl;
+    write_summary(filename, table_size_byte, probe_element_count_byte, collision_count, thread_count, chunk_size, "VOA",  median, mpps);
+
     std::cout << "---------------------------------------------------------------------------\n\n";
 }

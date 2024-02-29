@@ -6,8 +6,9 @@ thread_count=1
 shift_size=9
 collisions_count=0
 repeats=7
+filename=latest
 
-while getopts h:p:m:t:s:c:r: flag
+while getopts h:p:m:t:s:c:r:f: flag
 do 
     case "${flag}" in
         h) hash_table_mib=${OPTARG};;
@@ -17,7 +18,8 @@ do
         s) shift_size=${OPTARG};;
         c) collisions_count=${OPTARG};;
         r) repeats=${OPTARG};;
+        f) filename=${OPTARG};;
     esac
 done
 
-numactl -N 0 -m $mem_node ./a.out -kb $hash_table_mib -p $probe_gib -t $thread_count -s $shift_size -c $collisions_count -r $repeats
+numactl -N 0 -m $mem_node ./a.out -kb $hash_table_mib -p $probe_gib -t $thread_count -s $shift_size -c $collisions_count -r $repeats -f $filename
