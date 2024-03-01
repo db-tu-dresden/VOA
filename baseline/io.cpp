@@ -81,7 +81,7 @@ void write_summary(
     size_t collisions,
     size_t thread_count, 
     size_t step_size, 
-    std::string algorithmus, 
+    std::string algorithm, 
     uint64_t time_in_ms, 
     double mpps
 ){
@@ -90,7 +90,7 @@ void write_summary(
     std::string fname = c_filename_ss.str();
 
     std::stringstream content;
-    content << table_size_byte << "," << probe_size_byte << "," << collisions << "," << thread_count << "," << step_size << "," << algorithmus << "," << time_in_ms << "," << mpps;
+    content << table_size_byte << "," << probe_size_byte << "," << collisions << "," << thread_count << "," << step_size << "," << algorithm << "," << time_in_ms << "," << mpps;
     write_to_file(fname, content.str());
 }
 
@@ -103,7 +103,7 @@ void write_raw(
     size_t collisions, 
     size_t thread_count, 
     size_t step_size, 
-    std::string algorithmus,
+    std::string algorithm,
     uint64_t* time_in_ms,
     size_t number_results
 ){
@@ -112,7 +112,7 @@ void write_raw(
     std::string fname = c_filename_ss.str();
 
     std::stringstream content;
-    content << table_size_byte << "," << probe_size_byte << "," << key_count << "," << collisions << "," << thread_count << "," << step_size << "," << algorithmus << ",";
+    content << table_size_byte << "," << probe_size_byte << "," << key_count << "," << collisions << "," << thread_count << "," << step_size << "," << algorithm << ",";
     write_to_file(fname, content.str(), time_in_ms, number_results);
 
 }

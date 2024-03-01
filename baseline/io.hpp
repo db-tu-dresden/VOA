@@ -22,7 +22,7 @@ void write_summary(
     size_t collisions, 
     size_t thread_count, 
     size_t step_size, 
-    std::string algorithmus, 
+    std::string algorithm, 
     uint64_t time_in_ms, 
     double mpps);
 
@@ -34,7 +34,7 @@ void write_raw(
     size_t collisions, 
     size_t thread_count, 
     size_t step_size, 
-    std::string algorithmus, 
+    std::string algorithm, 
     uint64_t* time_in_ms,
     size_t number_results
 );

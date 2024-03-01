@@ -13,6 +13,8 @@
 
 #include <omp.h> // unused rn
 
+#include <numa.h>
+
 #include "io.hpp"
 
 #define VECTOR_ELEMENT_COUNT 8
@@ -218,7 +220,7 @@ size_t probe_simd_horizontal(uint64_t *table, size_t t_size, uint64_t *lookup, s
         uint64_t current_val = lookup[i];
         __m512i current_vec = _mm512_set1_epi64(current_val);
         size_t pos = (current_val - 1) << shift_val;
-        __m512i table_val = _mm512_loadu_epi64(&table[pos]);
+        __m512i table_val = _mm512_loadu_si512(&table[pos]);
         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
         
         hit_count += __builtin_popcount(res_val);
@@ -231,7 +233,7 @@ size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t 
     __m512i zero_512i = _mm512_setzero_si512();
     size_t hit_count = 0;
     for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
-        __m512i current_vec = _mm512_loadu_epi64(&lookup[i]);
+        __m512i current_vec = _mm512_loadu_si512(&lookup[i]);
         __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, _mm512_set1_epi64(1)), shift_val);
         __m512i table_val = _mm512_i64gather_epi64( position_vec, table, 8);
         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
@@ -249,7 +251,7 @@ size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t 
 //         uint64_t current_val = lookup[i];
 //         __m512i current_vec = _mm512_set1_epi64(current_val);
 //         size_t pos = (current_val - 1) << shift_val;
-//         __m512i table_val = _mm512_loadu_epi64(&table[pos]);
+//         __m512i table_val = _mm512_loadu_si512(&table[pos]);
 //         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
         
 //         hit_count += __builtin_popcount(res_val);
@@ -262,7 +264,7 @@ size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t 
 //     __m512i zero_512i = _mm512_setzero_si512();
 //     size_t hit_count = 0;
 //     for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
-//         __m512i current_vec = _mm512_loadu_epi64(&lookup[i]);
+//         __m512i current_vec = _mm512_loadu_si512(&lookup[i]);
 //         __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, _mm512_set1_epi64(1)), shift_val);
 //         __m512i table_val = _mm512_i64gather_epi64( position_vec, table, 8);
 //         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
@@ -388,9 +390,12 @@ int main(int argc, char** argv){
     size_t table_size = (key_element_count << shift_size); 
     size_t table_size_alloc = table_size + VECTOR_ELEMENT_COUNT; // we allocate more memory than we want to use to avoid segmentation faults
 
-    uint64_t* table = (uint64_t*)malloc(table_size_alloc * sizeof(uint64_t));
-    uint64_t* table_data = (uint64_t*)malloc(create_amount * sizeof(uint64_t));
-    uint64_t* probe_data = (uint64_t*)malloc(probe_element_count * sizeof(uint64_t));
+    // uint64_t* table = (uint64_t*)malloc(table_size_alloc * sizeof(uint64_t));
+    // uint64_t* table_data = (uint64_t*)malloc(create_amount * sizeof(uint64_t));
+    // uint64_t* probe_data = (uint64_t*)malloc(probe_element_count * sizeof(uint64_t));
+    uint64_t* table = (uint64_t*)numa_alloc(table_size_alloc * sizeof(uint64_t));
+    uint64_t* table_data = (uint64_t*)numa_alloc(create_amount * sizeof(uint64_t));
+    uint64_t* probe_data = (uint64_t*)numa_alloc(probe_element_count * sizeof(uint64_t));
     std::cout << "---------------------------------------------------------------------------\n";
     std::cout << "seed:\t" << seed << std::endl;
     std::cout << "---------------------------------------------------------------------------\n";
@@ -458,7 +463,7 @@ int main(int argc, char** argv){
     size_t time_ms[repeats];
     size_t x = 0; // used for evading compiler optimization
     std::cout << "---------------------------------------------------------------------------\n";
-    std::cout << "  " << repeats <<" repeats ± " << ignore_best_and_worst_x <<"\tmedian\tmean\tmax\tmin\n";
+    std::cout << "  " << repeats <<" repeats\t± " << ignore_best_and_worst_x <<"\tmedian\tmean\tmax\tmin\n";
 
 //---Scalar-Testing------------------------------
     std::cout << "Scalar" << std::flush;
@@ -528,7 +533,7 @@ int main(int argc, char** argv){
     }
     mean /= (repeats - ignore_best_and_worst_x * 2);
     mpps = (probe_element_count * 1000.) / (median * 1000 * 1000);
-    std::cout <<" ms\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
+    std::cout <<" ms\t\t\t" << median << "\t" << mean << "\t" << max << "\t" << min << std::endl;
     std::cout << "   Million Probes/s\t" << mpps << "\t\t\t\t" << (x & 0xF) << std::endl;
     write_summary(filename, table_size_byte, probe_element_count_byte, collision_count, thread_count, chunk_size, "VOA",  median, mpps);
 
