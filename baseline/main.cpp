@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string>
 #include <sstream>
+#include <cmath> 
 
 #include <immintrin.h>
 #include <emmintrin.h>
@@ -18,6 +19,7 @@
 #include "io.hpp"
 
 #define VECTOR_ELEMENT_COUNT 8
+#define CHUNK_SIZE 128
 
 using time_stamp = std::chrono::high_resolution_clock::time_point;
 time_stamp time_now(){
@@ -78,20 +80,45 @@ size_t noise(size_t position, size_t seed){
     return mangled;
 }
 
-void create_permutation(uint64_t* permutation, size_t permutation_size, size_t total_elements, size_t seed){
-    size_t run_nr = 0;
-    for(size_t p_element = 1; p_element < permutation_size; p_element++){
-        uint64_t element;
-        bool fine;
-        do{
-            fine = true;
-            element = (noise(run_nr++ + permutation[p_element - 1],  seed) % total_elements) + 1;
-            
-            //check for uniqueness of new value. CAN be done better with Dirks code.
-            for(size_t check = 0; check < p_element && fine; check++){
-                fine = (element != permutation[check]);
+size_t find_biggest_prime(size_t max_size){
+    size_t i;
+    bool is_prime = false;
+    if(max_size % 2 == 0){
+        max_size--;
+    }
+    for(i = max_size; i > 2; i -= 2){
+        if((i % 4) == 3){
+            is_prime = true;
+            for(size_t e = 3; e <= std::sqrt(i); e+=2){
+                if(i % e == 0){
+                    is_prime = false;
+                }
             }
-        }while(!fine);
+        }
+        if(is_prime){
+            break;
+        }
+    }
+    return i;
+}
+
+size_t cp_and = 0xFFFF;
+size_t cp_prime = find_biggest_prime(cp_and);
+
+void create_permutation(uint64_t* permutation, size_t permutation_size, size_t total_elements, size_t prime, size_t seed){
+    size_t run_nr = 0;
+    size_t start_pos = noise(permutation[0], seed);
+    size_t step_size = permuteQPR(noise(permuteQPR(permutation[0], prime), seed) & cp_and, cp_prime);
+    step_size %= (total_elements/(VECTOR_ELEMENT_COUNT+1));
+    if(step_size == 0){
+        step_size = 1;
+    }
+    // std::cout << step_size << "\t" << total_elements << "\t" << std::flush;
+    bool okay = true;
+    for(size_t p_element = 1, current_pos = start_pos; p_element < permutation_size; p_element += okay, current_pos += step_size){
+        current_pos %= total_elements;
+        uint64_t element = permuteQPR(current_pos, prime);
+        element++;
         permutation[p_element] = element;
     }
 }
@@ -123,6 +150,16 @@ void print_permutations(uint64_t* permutations, size_t permutation_size, size_t 
     std::cout << std::endl;
 }
 
+void print_permutation(uint64_t* permutations, size_t permutation_size, size_t permutation_count){
+    for(size_t i = permutation_count; i <= permutation_count; i++){
+        std::cout << i << ":\t";
+        for(size_t e =0; e < permutation_size; e++){
+            std::cout << "\t" << permutations[i * permutation_size + e];
+        }
+        std::cout << std::endl;
+    }
+}
+
 void collision_permutation(uint64_t* permutation, size_t permutation_size, size_t collisions ,size_t seed){
     collisions += (collisions == 0);
     collisions--;
@@ -141,22 +178,28 @@ void collision_permutation(uint64_t* permutation, size_t permutation_size, size_
     }
 }
 
-void generate_permutation(uint64_t* permutations, size_t permutation_size, size_t permutation_count, size_t total_elements, size_t seed, size_t collisions){
+void generate_permutation(uint64_t* permutations, size_t permutation_size, size_t permutation_count, size_t total_elements, size_t prime, size_t seed, size_t collisions){
     size_t run_nr = 0;
-
+    size_t last = 0;
     for(size_t p_nr = 0; p_nr < permutation_count; p_nr++){
         uint64_t * help = &permutations[p_nr * permutation_size];
         help[0] = (p_nr % total_elements) + 1;
 start_generation:
         //generate a permutation
-        create_permutation(help, permutation_size, total_elements, seed + ++run_nr);
+        create_permutation(help, permutation_size, total_elements, prime, seed + ++run_nr);
 
         collision_permutation(help, permutation_size, collisions, (seed + run_nr) ^ 0xf3a489c2);
         //check if permutation is unique
-        bool unique = is_unique(permutations, permutation_size, p_nr);
-           
+        bool unique = true;
+        if(help[0] < last){
+            unique = is_unique(permutations, permutation_size, p_nr);
+        }else{
+            last = help[0]; 
+        }
+        // std::cout << unique << ":\t" << std::flush;
+        // print_permutation(permutations, permutation_size, p_nr); 
         if(!unique){ 
-            print_permutations(permutations, permutation_size, p_nr);
+            print_permutations(permutations, permutation_size, p_nr); 
             std::cout << p_nr << "\tjump\n";
             goto start_generation;
         }
@@ -173,7 +216,12 @@ size_t generate_probe_data(uint64_t*& values, size_t size, size_t key_element_co
     size_t permutation_count = key_element_count + 3 * (collisions != 8);
     size_t permutation_length = VECTOR_ELEMENT_COUNT; 
     uint64_t* permutations = (uint64_t*) malloc(permutation_count * permutation_length * sizeof(uint64_t));
-    generate_permutation(permutations, permutation_length, permutation_count, key_element_count, seed, collisions);
+    // std::cout << "generate_probe_data: a " << std::flush;
+    size_t prime = find_biggest_prime(key_element_count);
+    // std::cout << "b " << std::flush;
+    
+    generate_permutation(permutations, permutation_length, permutation_count, key_element_count, prime, seed, collisions);
+    // std::cout << "c " << std::flush;
     
     size_t i = 0, pos = 0;
     for(i = 0, pos = 0; i < (size / permutation_length) &&  pos < size; i++){
@@ -183,6 +231,7 @@ size_t generate_probe_data(uint64_t*& values, size_t size, size_t key_element_co
             values[pos] = help[e];
         }
     }
+    // std::cout << "d " << std::endl;
 
     free(permutations);
     return pos; 
@@ -243,36 +292,77 @@ size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t 
     return hit_count;
 }
 
-// TODO
-// size_t probe_simd_horizontal_multi_threaded(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements){
-//     size_t shift_val = __builtin_ctz(chunk_size_elements);
-//     size_t hit_count = 0;
-//     for(size_t i = 0; i < l_size; i++){
-//         uint64_t current_val = lookup[i];
-//         __m512i current_vec = _mm512_set1_epi64(current_val);
-//         size_t pos = (current_val - 1) << shift_val;
-//         __m512i table_val = _mm512_loadu_si512(&table[pos]);
-//         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
-        
-//         hit_count += __builtin_popcount(res_val);
-//     }
-//     return hit_count;
-// }
+size_t probe_scalar(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements, size_t thread_count){
+    size_t shift_val = __builtin_ctz(chunk_size_elements);
 
-// size_t probe_simd_voa_multi_threaded(uint64_t *table, size_t t_size, uint64_t * lookup, size_t l_size, size_t chunk_size_elements){
-//     size_t shift_val = __builtin_ctz(chunk_size_elements);
-//     __m512i zero_512i = _mm512_setzero_si512();
-//     size_t hit_count = 0;
-//     for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
-//         __m512i current_vec = _mm512_loadu_si512(&lookup[i]);
-//         __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, _mm512_set1_epi64(1)), shift_val);
-//         __m512i table_val = _mm512_i64gather_epi64( position_vec, table, 8);
-//         __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
+    size_t hit_count[thread_count] = {};
+    size_t real_hit_count = 0;
+
+    #pragma omp parallel for schedule(static,  CHUNK_SIZE) num_threads(thread_count)
+    for(size_t i = 0; i < l_size; i++){
+        size_t t_id = omp_get_thread_num();
+        uint64_t current_val = lookup[i];
+        size_t pos = (current_val - 1) << shift_val;
+        bool res_val = table[pos] == current_val;
+        hit_count[t_id] += res_val;
+    }
+
+    for(size_t i = 0; i < thread_count; i++){
+        real_hit_count += hit_count[i];
+    }
+    return real_hit_count;
+}
+
+size_t probe_simd_horizontal(uint64_t *table, size_t t_size, uint64_t *lookup, size_t l_size, size_t chunk_size_elements, size_t thread_count){
+    size_t shift_val = __builtin_ctz(chunk_size_elements);
+    
+    size_t hit_count[thread_count] = {};
+    size_t real_hit_count = 0;
+
+    #pragma omp parallel for schedule(static,  CHUNK_SIZE) num_threads(thread_count)
+    for(size_t i = 0; i < l_size; i++){
+        size_t t_id = omp_get_thread_num();
+
+        uint64_t current_val = lookup[i];
+        __m512i current_vec = _mm512_set1_epi64(current_val);
+        size_t pos = (current_val - 1) << shift_val;
+        __m512i table_val = _mm512_loadu_si512(&table[pos]);
+        __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
         
-//         hit_count += __builtin_popcount(res_val);
-//     }
-//     return hit_count;
-// }
+        hit_count[t_id] += __builtin_popcount(res_val);
+    }
+
+
+    for(size_t i = 0; i < thread_count; i++){
+        real_hit_count += hit_count[i];
+    }
+    return real_hit_count;
+}
+
+size_t probe_simd_voa(uint64_t *table, size_t t_size, uint64_t * lookup, size_t l_size, size_t chunk_size_elements, size_t thread_count){
+    size_t shift_val = __builtin_ctz(chunk_size_elements);
+    __m512i zero_512i = _mm512_setzero_si512();
+    __m512i one_512i = _mm512_set1_epi64(1);
+
+    size_t hit_count[thread_count] = {};
+    size_t real_hit_count = 0;
+    #pragma omp parallel for schedule(static,  CHUNK_SIZE) num_threads(thread_count)
+    for(size_t i = 0; i < l_size; i+= VECTOR_ELEMENT_COUNT){
+        size_t t_id = omp_get_thread_num();
+
+        __m512i current_vec = _mm512_loadu_si512(&lookup[i]);
+        __m512i position_vec = _mm512_slli_epi64(_mm512_sub_epi64(current_vec, one_512i), shift_val);
+        __m512i table_val = _mm512_i64gather_epi64(position_vec, table, 8);
+        __mmask8 res_val = _mm512_cmp_epi64_mask(current_vec, table_val, _MM_CMPINT_EQ);
+        
+        hit_count[t_id] += __builtin_popcount(res_val);
+    }
+
+    for(size_t i = 0; i < thread_count; i++){
+        real_hit_count += hit_count[i];
+    }
+    return real_hit_count;
+}
 
 void sort(uint64_t* vals, size_t size){
     for(size_t i = 0; i < size; i ++){
@@ -397,7 +487,7 @@ int main(int argc, char** argv){
     uint64_t* table_data = (uint64_t*)numa_alloc(create_amount * sizeof(uint64_t));
     uint64_t* probe_data = (uint64_t*)numa_alloc(probe_element_count * sizeof(uint64_t));
     std::cout << "---------------------------------------------------------------------------\n";
-    std::cout << "seed:\t" << seed << std::endl;
+    std::cout << "seed: " << seed << "\tcollision: " << collision_count << "\tthreads: " << thread_count << std::endl;
     std::cout << "---------------------------------------------------------------------------\n";
 //---Generating-Hash-Table-and-Printing-Info---------
     size_t table_size_byte = table_size * sizeof(uint64_t);
@@ -448,14 +538,29 @@ int main(int argc, char** argv){
 //---Sanity-Checking-that-both-algs-have-same-result-
     size_t a,b,c;
     std::cout << "sanity check: " << std::flush;
-    a = probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
+    if(thread_count == 1){
+        a = probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
+    }else{
+        a = probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size, thread_count);
+    }
     std::cout << a << "\t" << std::flush;
-    b = probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
+    if(thread_count == 1){
+        b = probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
+    }else{
+        b = probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size, thread_count);
+    }
     std::cout << b << "\t" << std::flush;
-    c = probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size); 
+    if(thread_count == 1){
+        c = probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size); 
+    }else{
+        c = probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size, thread_count); 
+    }
     std::cout << c << "\t" << std::flush; 
-    std::cout << a - b << " " << a - c << " " << b - c << std::endl;    
-
+    std::cout << a - b << " " << b - c << " " << c - a << std::endl;    
+    if(a != b || b != c || c != a){
+        std::cout << "---------------------------------------------------------------------------\n";
+        exit(1);
+    }
 //---Timeing-----------------------------------------
     uint64_t median, mean, min, max;
     double mpps;
@@ -468,10 +573,17 @@ int main(int argc, char** argv){
 //---Scalar-Testing------------------------------
     std::cout << "Scalar" << std::flush;
     for(size_t i = 0; i < repeats; i++){
-        time_stamp b = time_now();
-        x += probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
-        time_stamp e = time_now();
-        time_ms[i] = duration_time_milliseconds(b, e);
+        if(thread_count == 1){
+            time_stamp b = time_now();
+            x += probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);
+        }else{
+            time_stamp b = time_now();
+            x += probe_scalar(table, table_size, probe_data, probe_element_count, chunk_size, thread_count);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);    
+        }
     }
 
     write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "Scalar", time_ms, repeats);
@@ -492,10 +604,17 @@ int main(int argc, char** argv){
 //---Horizontal-Testing------------------------------
     std::cout << "Horizontal" << std::flush;
     for(size_t i = 0; i < repeats; i++){
-        time_stamp b = time_now();
-        x += probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
-        time_stamp e = time_now();
-        time_ms[i] = duration_time_milliseconds(b, e);
+        if(thread_count == 1){
+            time_stamp b = time_now();
+            x += probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);
+        }else{
+            time_stamp b = time_now();
+            x += probe_simd_horizontal(table, table_size, probe_data, probe_element_count, chunk_size, thread_count);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);    
+        }
     }
 
     write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "Horizontal", time_ms, repeats);
@@ -516,10 +635,17 @@ int main(int argc, char** argv){
 //---VOA-Testing-------------------------------------
     std::cout << "VOA" << std::flush;
     for(size_t i = 0; i < repeats; i++){
-        time_stamp b = time_now();
-        x += probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size);
-        time_stamp e = time_now();
-        time_ms[i] = duration_time_milliseconds(b, e);
+        if(thread_count == 1){
+            time_stamp b = time_now();
+            x += probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);
+        }else{
+            time_stamp b = time_now();
+            x += probe_simd_voa(table, table_size, probe_data, probe_element_count, chunk_size, thread_count);
+            time_stamp e = time_now();
+            time_ms[i] = duration_time_milliseconds(b, e);    
+        }
     }
 
     write_raw(filename, table_size_byte, probe_element_count_byte, key_element_count, collision_count, thread_count, chunk_size, "VOA", time_ms, repeats);

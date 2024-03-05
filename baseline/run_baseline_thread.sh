@@ -1,12 +1,13 @@
-benchmark="baseline_scale"  # benchmark name
+benchmark="baseline_threads"  # benchmark name
 repeats=7                       # test repeats
 node=0                          # memory node
 probe=4                         # probe amount in gib
 hash_table_size=32 
-collisions_count=0    
-thread_count=1
+collisions_count=0
 file_override=0
 file_override_name=""
+max_threads=12
+shift_size=9
 while getopts h:c:p:m:t:r:f: flag
 do 
     case "${flag}" in
@@ -14,7 +15,8 @@ do
         h) hash_table_size=${OPTARG};;
         p) probe=${OPTARG};;
         m) node=${OPTARG};;
-        t) thread_count=${OPTARG};;
+        t) max_threads=${OPTARG};;
+        s) shift_size=${OPTARG};;
         r) repeats=${OPTARG};;
         f) file_override=1 
            file_override_name=${OPTARG};;
@@ -40,7 +42,7 @@ fi
 
 filename="$filename"_"$memory"
 
-for i in {1..9}
+for i in `seq 1 $max_threads`
 do
-    ./run_benchmark.sh -m $node -p $probe -t $thread_count -c $collisions_count -s $i -r $repeats -f $filename -h $hash_table_size;
+    ./run_benchmark.sh -m $node -p $probe -t $i -c $collisions_count -s $shift_size -r $repeats -f $filename -h $hash_table_size;
 done
