@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-#include <omp.h> // unused rn
+#include <omp.h> 
 
 #include <numa.h>
 

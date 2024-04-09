@@ -40,7 +40,7 @@ fi
 
 filename="$filename"_"$memory"
 
-for i in {1..9}
+for i in {0..9}
 do
     ./run_benchmark.sh -m $node -p $probe -t $thread_count -c $collisions_count -s $i -r $repeats -f $filename -h $hash_table_size;
 done
